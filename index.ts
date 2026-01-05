@@ -315,7 +315,7 @@ Bun.serve({
                         return;
                     }
                     markSession.attendance[gotData.studentId] = gotData.status;
-                    await new Promise(resolve => setTimeout(resolve, 0)); // needed with bun as I didnt change the test
+                    await new Promise(resolve => setTimeout(resolve, 0));
                     broadcast({
                         event: "ATTENDANCE_MARKED",
                         data: {
@@ -338,7 +338,7 @@ Bun.serve({
                     }
                     const present = Object.values(summarySession.attendance).filter(a => a == 'present').length;
                     const absent = Object.values(summarySession.attendance).filter(a => a == 'absent').length;
-                    await new Promise(resolve => setTimeout(resolve, 0)); // yield to event loop
+                    await new Promise(resolve => setTimeout(resolve, 0));
                     broadcast({
                         event: "TODAY_SUMMARY",
                         data: {
