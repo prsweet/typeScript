@@ -85,7 +85,7 @@ function broadcast(message: object) {
 }
 
 
-let activeSession: { classId: string, teacherId: string, startedAt: string, attendance: Record<string, 'present' | 'absent'> } | null = null;
+let activeSession: { classId: string, startedAt: string, attendance: Record<string, 'present' | 'absent'> } | null = null;
 
 // function getActiveSession(teacherId: null | string = null): typeof activeSession {
 //     let allClear = !activeSession || (teacherId && activeSession.teacherId !== teacherId);
