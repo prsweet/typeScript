@@ -1,4 +1,4 @@
-# typescript
+# 100xEndterm
 
 To install dependencies:
 
