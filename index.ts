@@ -283,13 +283,10 @@ Bun.serve({
             }
         },
         message: async (ws: userWs, data) => {
-            let gotEvent;
-            let gotData;
-            try {
-                const parsedData = JSON.parse(data.toString());
-                gotEvent = parsedData.event;
-                gotData = parsedData.data;
-            } catch (error) {
+            const parsedData = JSON.parse(data.toString());
+            let gotEvent: string | null =  parsedData.event;
+            let gotData: any | null = parsedData.data;
+            if (gotEvent == "ATTENDANCE_MARKED" && !gotData) {
                 ws.send(JSON.stringify({
                     event: "ERROR",
                     data: { message: "Invalid message format" }
