@@ -384,23 +384,23 @@ Bun.serve({
                         ws.close();
                         return;
                     }
-                    present = 0;
-                    absent = 0;
+                    let present1 = 0;
+                    let absent1 = 0;
                     const allStudents = await userModel.find({ _id: { $in: curClass.studentIds } });
                     for (let u of allStudents) {
                         if (!activeSession.attendance[(u._id.toString())]) {
                             activeSession.attendance[(u._id.toString())] = 'absent';
-                            absent++;
-                        } else present++;
+                            absent1++;
+                        } else present1++;
                         await attendanceModel.create({ classId: activeSession.classId, studentId: u._id, status: activeSession.attendance[(u._id.toString())] })
                     }
                     broadcast({
                         event: "DONE",
                         data: {
                             message: "Attendance persisted",
-                            present: present,
-                            absent: absent,
-                            total: absent + present
+                            present: present1,
+                            absent: absent1,
+                            total: absent1 + present1
                         }
                     });
                     activeSession = null;
@@ -415,7 +415,7 @@ Bun.serve({
                     break;
             }
         },
-        close: (ws: userWs) => {
+        close(ws: userWs) {
             if (ws.user) {
                 wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
             }
