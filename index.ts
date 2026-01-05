@@ -1,4 +1,4 @@
-import type { Serve, ServerWebSocket } from "bun";
+import { file, type Serve, type ServerWebSocket } from "bun";
 import { attendanceModel, classModel, userModel } from "./db";
 import { addclassSchema, addStudentSchema, loginSchema, signupSchema, startAttendance } from "./types"
 import jwt, { type JwtPayload } from "jsonwebtoken";
@@ -80,17 +80,16 @@ const auth = (handler: (req: userInfo) => Response | Promise<Response>) => {
 
 function broadcast(message: object) {
     wsUsers.forEach((ws) => {
-            ws.send(JSON.stringify(message));
+        ws.send(JSON.stringify(message));
     });
 }
 
+let activeSession: { classId: string, teacherId: string, startedAt: string, attendance: Record<string, 'present' | 'absent'> } | null = null;
 
-let activeSession: { classId: string, startedAt: string, attendance: Record<string, 'present' | 'absent'> } | null = null;
-
-// function getActiveSession(teacherId: null | string = null): typeof activeSession {
-//     let allClear = !activeSession || (teacherId && activeSession.teacherId !== teacherId);
-//     return allClear ? activeSession : null;
-// } -> tried it still not working;
+function getActiveSession(teacherId: string | null = null) {
+    let fails = !activeSession || (teacherId && activeSession.teacherId !== teacherId)
+    return fails ? null : activeSession;
+}
 
 let wsUsers: userWs[] = [];
 
@@ -241,6 +240,7 @@ Bun.serve({
                 if (classExist.teacherId.toString() != req.userId) return Response.json(responses.classOwner, 403);
                 activeSession = {
                     classId: validated.data.classId,
+                    teacherId: req.userId!,
                     startedAt: new Date().toISOString(),
                     attendance: {}
                 };
@@ -282,54 +282,63 @@ Bun.serve({
             }
         },
         message: async (ws: userWs, data) => {
-            const parsedData = JSON.parse(data.toString());
-            let gotEvent: string | null =  parsedData.event;
+            let parsedData;
+            try {
+                parsedData = JSON.parse(data.toString());
+            } catch (e) {
+                ws.send(JSON.stringify({
+                    event: "ERROR",
+                    data: { message: "Invalid message format" }
+                }));
+                return;
+            }
+            let gotEvent: string | null = parsedData.event;
             let gotData: any | null = parsedData.data;
             if (gotEvent == "ATTENDANCE_MARKED" && !gotData) {
                 ws.send(JSON.stringify({
                     event: "ERROR",
                     data: { message: "Invalid message format" }
                 }));
-                wsUsers = wsUsers.filter((thisWS) => thisWS.user.userId != ws.user.userId);
                 ws.close();
                 return;
             }
             switch (gotEvent) {
-                case "ATTENDANCE_MARKED":
+                case "ATTENDANCE_MARKED": {
                     if (ws.user.role != 'teacher') {
                         ws.send(JSON.stringify(responses.teacherOnlyWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         ws.close();
                         return;
                     }
-                    if (!activeSession) {
+                    const markSession = getActiveSession(ws.user.userId);
+                    if (!markSession) {
                         ws.send(JSON.stringify(responses.noActiveSessionWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         return;
                     }
-                    activeSession.attendance[gotData.studentId] = gotData.status;
+                    markSession.attendance[gotData.studentId] = gotData.status;
+                    await new Promise(resolve => setTimeout(resolve, 0)); // needed with bun as I didnt change the test
                     broadcast({
                         event: "ATTENDANCE_MARKED",
                         data: {
                             studentId: gotData.studentId,
-                            status: activeSession.attendance[gotData.studentId]
+                            status: markSession.attendance[gotData.studentId]
                         }
                     });
                     break;
-                case "TODAY_SUMMARY":
+                }
+                case "TODAY_SUMMARY": {
                     if (ws.user.role != 'teacher') {
                         ws.send(JSON.stringify(responses.teacherOnlyWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         ws.close();
                         return;
                     }
-                    if (!activeSession) {
+                    const summarySession = getActiveSession(ws.user.userId);
+                    if (!summarySession) {
                         ws.send(JSON.stringify(responses.noActiveSessionWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         return;
                     }
-                    let present = Object.values(activeSession.attendance).filter(a => a == 'present').length;
-                    let absent = Object.values(activeSession.attendance).filter(a => a == 'absent').length;
+                    const present = Object.values(summarySession.attendance).filter(a => a == 'present').length;
+                    const absent = Object.values(summarySession.attendance).filter(a => a == 'absent').length;
+                    await new Promise(resolve => setTimeout(resolve, 0)); // yield to event loop
                     broadcast({
                         event: "TODAY_SUMMARY",
                         data: {
@@ -339,39 +348,44 @@ Bun.serve({
                         }
                     });
                     break;
-                case "MY_ATTENDANCE":
+                }
+                case "MY_ATTENDANCE": {
                     if (ws.user.role != 'student') {
                         ws.send(JSON.stringify(responses.studentOnlyWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         ws.close();
                         return;
                     }
-                    if (!activeSession) {
+                    const mySession = getActiveSession();
+                    if (!mySession) {
                         ws.send(JSON.stringify(responses.noActiveSessionWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         return;
                     }
-                    const studentStatus = activeSession.attendance[ws.user.userId];
+                    const studentClass = await classModel.findById(mySession.classId);
+                    if (!studentClass || !studentClass.studentIds.some(id => id.toString() === ws.user.userId)) {
+                        ws.send(JSON.stringify(responses.noActiveSessionWS));
+                        return;
+                    }
+                    const studentStatus = mySession.attendance[ws.user.userId] || "not yet updated";
                     ws.send(JSON.stringify({
                         event: "MY_ATTENDANCE",
                         data: {
-                            status: studentStatus ? studentStatus : "not yet updated"
+                            status: studentStatus
                         }
                     }));
                     break;
-                case "DONE":
+                }
+                case "DONE": {
                     if (ws.user.role != 'teacher') {
                         ws.send(JSON.stringify(responses.teacherOnlyWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         ws.close();
                         return;
                     }
-                    if (!activeSession) {
+                    const doneSession = getActiveSession(ws.user.userId);
+                    if (!doneSession) {
                         ws.send(JSON.stringify(responses.noActiveSessionWS));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
                         return;
                     }
-                    const curClass = await classModel.findOne({ _id: activeSession.classId });
+                    const curClass = await classModel.findOne({ _id: doneSession.classId });
                     if (!curClass) {
                         ws.send(JSON.stringify({
                             event: "ERROR",
@@ -379,19 +393,17 @@ Bun.serve({
                                 message: "Class not found"
                             }
                         }));
-                        wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
-                        ws.close();
                         return;
                     }
                     let present1 = 0;
                     let absent1 = 0;
                     const allStudents = await userModel.find({ _id: { $in: curClass.studentIds } });
-                    for (let u of allStudents) {
-                        if (!activeSession.attendance[(u._id.toString())]) {
-                            activeSession.attendance[(u._id.toString())] = 'absent';
+                    for (const u of allStudents) {
+                        if (!doneSession.attendance[(u._id.toString())]) {
+                            doneSession.attendance[(u._id.toString())] = 'absent';
                             absent1++;
                         } else present1++;
-                        await attendanceModel.create({ classId: activeSession.classId, studentId: u._id, status: activeSession.attendance[(u._id.toString())] })
+                        await attendanceModel.create({ classId: doneSession.classId, studentId: u._id, status: doneSession.attendance[(u._id.toString())] })
                     }
                     broadcast({
                         event: "DONE",
@@ -404,20 +416,18 @@ Bun.serve({
                     });
                     activeSession = null;
                     break;
+                }
                 default:
                     ws.send(JSON.stringify({
                         event: "ERROR",
                         data: { message: "Unknown event" }
                     }));
-                    wsUsers = wsUsers.filter((thisWs) => thisWs.user.userId !== ws.user.userId);
                     ws.close();
                     break;
             }
         },
-        close(ws: userWs) {
-            if (ws.user) {
-                wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
-            }
+        close: (ws: userWs) => {
+            wsUsers = wsUsers.filter((user) => user.user.userId !== ws.user.userId);
         }
     },
 })
